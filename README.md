@@ -8,8 +8,11 @@ speakers, and network stability to a destination. The WebRTC web page should sup
 Chrome, Edge, and Firefox.  
 
 ## Components
-Server: Backend, developed in C++, host index.html and respond to browser ```mediaEcho```  
-POST request.  
+Server: Backend, developed in C++, hosts index.html and respond to browser ```mediaEcho```  
+```POST``` request.  
+Index.html: Frontend, records video from webcam and microphone and send the recorded  
+fragment to server via ```POST```. From from response its fetches the fragment, play and  
+update statistical data.   
 
 ## Build
 Open VC++ Native Tool command prompt:  
@@ -26,6 +29,7 @@ Open a browser(Chrome/Firefox/Edge) and type: ```https://<IP Address>:<Port>```
 Since the self signed certificate used, the certificate verification fails, ignore  
 and proceed to view the page. On the page, click on ```Connect``` button. The video  
 streaming. On the upper left corner it shows following information:  
+  
 Container - Format used for video recording  
 Bitrate - Bitrate used for video recording  
 Fragment - Recorded fragment size in second  
@@ -40,7 +44,7 @@ before launching the server.
 ## Dependency
 Server uses HTTPS, for that SSL needs to be used, which require a valid certificate.  
 For testing and development a self-signed certificate(```server.pem```) used.  
-
+  
 Tested with the following browsers:  
 1. Chrome - 85.0.4183.102  
 2. Firefox - 80.0.1  
