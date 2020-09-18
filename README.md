@@ -8,9 +8,11 @@ speakers, and network stability to a destination. The WebRTC web page should sup
 Chrome, Edge, and Firefox.  
 
 ## Components
-Server: Backend, developed in C++, hosts index.html and respond to browser ```mediaEcho```  
+### Server
+Backend, developed in C++, hosts index.html and respond to browser ```mediaEcho```  
 ```POST``` request.  
-Index.html: Frontend, records video from webcam and microphone and send the recorded  
+### Index.html
+Frontend, records video from webcam and microphone and send the recorded  
 fragment to server via ```POST```. From from response its fetches the fragment, play and  
 update statistical data.   
 
