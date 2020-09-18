@@ -54,5 +54,5 @@ Tested with the following browsers:
 
 ## Known Issues
 Even though the ```echoCancellation``` and ```noiseSuppression``` options are used in  
-```getUserMedia```, it does not work for all browsers.  
+```getUserMedia```, it does not work for all browsers and echo is heared in the speaker.    
  
