@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+<link rel="icon" href="favicon.ico" type="image/x-icon">
+<link rel="shortcut icon" href="favicon.ico" type="image/x-icon"> 
+<title>WebRTC Reflector</title>
+</head>
+<style>
+.video_item {
+	width: 90%;
+	height: auto;
+	border-style: solid;
+	border-color: red;
+	border-width: 2px;
+	align-items: center;
+    justify-content: center;
+	display: flex;
+	flex-direction: column;
+}
+
+.overlay_item {
+    background: #b3e0ff;
+    position: absolute;
+    width: 25%;
+	top: 3%; left: 3%;
+    display: none;
+    margin: 2px;
+}
+
+p {
+  margin-top: 2px;
+  margin-bottom: 2px;
+  font-size: 18px;
+  font-family: Arial;
+  text-decoration: none;
+}
+
+.video_item {
+	width: 90%;
+	height: auto;
+	border-style: solid;
+	border-color: red;
+	border-width: 2px;
+	align-items: center;
+    justify-content: center;
+	display: flex;
+	flex-direction: column;
+}
+
+button {
+    margin: 2px;
+    background-color: #007acc;
+	border-style: solid;
+	border-color: black;
+	border-width: 1px;
+    color: white;
+    padding: 10px 32px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 20px;
+	font-family: Arial;
+}
+button:hover {
+    box-shadow: 5px 10px 14px #888888;
+}
+button:active {
+    background-color: #004d80;
+}
+
+</style>
+<body onLoad="handleLoading()">
+<div id='overlay' class="overlay_item">
+<p id='container'>Container: --</p>
+<p id='rate'>Bitrate: --</p>
+<p id='frag'>Fragment: --</p>
+<p id='rtt'>RTT: --</p>
+</div>
+<center>
+<div class="video_item">
+<video id='reflect_video2' width=640 height=480 ></video> 
+<button id="connect" onclick="handleConnect()">Connect</button>
+</div>
+</center>
+
+<script>
+let mediaStream = null;
+let mediaRecorder = null;
+let mediaSource = null;
+let sourceBuffer = null;
+const serverUrl = "https://%s:%d/mediaEcho";
+let mimeTypeUse = null;
+const videoFragSize = %d;
+let videoFragCount = 0;
+let lastFragNumber = 0;
+let lastFragTime = 0;
+let browser = "Chrome";
+let connected = false;
+
+var option = {
+	audio: {
+		echoCancellation: {exact: true},
+		noiseSuppression: {exact: true}
+	},
+	video: true
+};
+
+navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia
+URL = window.webkitURL || window.URL;
+
+function getMediaStream()
+{ 
+    navigator.mediaDevices.getUserMedia(option).then(function(stream) {
+	    mediaStream = stream;
+				
+		
+		if (MediaSource.isTypeSupported('video/webm;codecs="vp9"'))
+		    mimeTypeUse = 'video/webm;codecs="vp9"'
+        else if (MediaSource.isTypeSupported('video/mp4'))
+            mimeTypeUse = 'video/mp4';
+		else 
+		    console.log("Not found a valid mime type");
+		console.log("Supported mime type: ", mimeTypeUse);
+		if (browser === 'Firefox')
+			mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'video/webm', bitsPerSecond: 1000000 });
+		else
+			mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'video/webm;codecs="vp9"', bitsPerSecond: 1000000 });
+		mediaSource = new MediaSource();
+		
+		mediaSource.addEventListener("sourceopen", () => {	
+			if (mimeTypeUse === 'video/webm;codecs="vp9"')
+				sourceBuffer = mediaSource.addSourceBuffer('video/webm;codecs="vp9,opus"')
+			else if (mimeTypeUse === 'video/mp4')
+				sourceBuffer = mediaSource.addSourceBuffer('video/mp4')
+			sourceBuffer.mode = 'sequence';
+			sourceBuffer.timestampOffset = 0.0
+		});
+		
+		var video = document.getElementById('reflect_video2');
+        video.src = URL.createObjectURL(mediaSource)
+		
+        mediaRecorder.addEventListener("dataavailable", event => {
+		    //console.log("dataavailable ", event.data);
+					    			
+			event.data.arrayBuffer().then(b => {				
+				let t = new Uint8Array(b)				
+				let request = new XMLHttpRequest();
+				request.onreadystatechange = () => {
+					try {
+						if (request.readyState == 4) {
+							if (request.status == 200) {
+								//console.log("POST response: ", request.response);
+								request.response.arrayBuffer().then(b => {
+
+                                    sourceBuffer.addEventListener('updateend', () => { 
+										console.log("Buffer update end")
+									});
+									
+									sourceBuffer.addEventListener('error', () => {
+										console.log("Buffer error")
+									});
+									
+									sourceBuffer.appendBuffer(b)
+								    let video = document.getElementById('reflect_video2');
+									if (video.paused)
+										video.play().then(() => {console.log("Play success");}).catch( () => {console.log("Play failed");});
+									
+								});
+								let fragNumber = parseInt(request.getResponseHeader("Pragma"))
+								console.log("fragNumber = ", fragNumber)
+								if (lastFragNumber === fragNumber) {
+					                let date = new Date();
+									document.getElementById('rtt').innerHTML = "RTT: " + (date.getTime() - lastFragTime) + " ms"
+								}
+								request = null;
+							}
+						}
+					} catch (e) {
+						console.log("error: " + e.description);
+					}
+				}
+				request.onerror = () => {
+					console.log("POST failed");
+					stopRecording();
+				}
+				request.open("POST", serverUrl, true);
+				request.setRequestHeader("Content-Type", "application/octet-stream");
+				request.setRequestHeader("Pragma", videoFragCount.toString());
+				request.responseType = "blob";
+				request.send(t);
+				lastFragNumber = videoFragCount++;
+				let date = new Date();
+				lastFragTime = date.getTime();
+				document.getElementById('rate').innerHTML = "Bitrate: " + (t.length * 8 / (videoFragSize * 1000000)).toFixed(2) + " mbps"
+			});			
+        });
+		
+		mediaRecorder.addEventListener("error", event => {
+			console.log("mediaRecorder error: " + e.description);
+		});
+		
+		mediaRecorder.start(videoFragSize * 1000);
+		
+		connected = true;
+		
+		document.getElementById('frag').innerHTML = "Fragment: " + videoFragSize + " sec"
+		let res = mimeTypeUse.split(";")
+		document.getElementById('container').innerHTML = "Container: " + res[0]
+			
+    }).catch(error);
+}
+
+function error(error) { 
+    console.error('error:', error); 
+}
+
+function handleLoading() {
+	//console.log(navigator.userAgent)
+	let str = navigator.userAgent
+	let srtList = str.split(" ");
+	let token = srtList[srtList.length - 1]
+	browser = token.split("/")[0]
+	
+	console.log("Browser = ", browser)
+}
+
+function startRecording() {
+	videoFragCount = 0;
+	lastFragNumber = 0;
+	lastFragTime = 0;
+	
+	getMediaStream();
+
+    document.getElementById('connect').innerHTML = "Disconnect"
+	document.getElementById('overlay').style.display = "inline"
+}
+
+function stopRecording() {
+	mediaRecorder.stop();
+	connected = false;
+	mediaStream.getTracks()[0].stop()
+	document.getElementById('connect').innerHTML = "Connect"
+	document.getElementById('reflect_video2').src = ""
+	document.getElementById('container').innerHTML = "Container: --"
+	document.getElementById('frag').innerHTML = "Fragment: --"
+	document.getElementById('rate').innerHTML = "Bitrate: --"
+	document.getElementById('rtt').innerHTML = "RTT: --"
+	document.getElementById('overlay').style.display = "none"
+}
+
+function handleConnect() {
+	if (!connected) {
+		startRecording();
+	} else {
+		stopRecording();
+	}
+}
+
+</script>
+</body>
+</html>
