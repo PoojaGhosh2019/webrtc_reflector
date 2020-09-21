@@ -42,6 +42,21 @@
 #define HTTP_LOG_ERROR        (0x01)
 #define HTTP_LOG_DEBUG        (0x02)
 
+
+typedef enum {
+    CONNECTION_STATE_INIT = 1,
+	CONNECTION_STATE_END  = 2,
+} ConnectionState_t;
+
+typedef struct {
+	uint32_t          id;
+	BIO*              sbio;
+	std::thread*      thread;
+	ConnectionState_t state;
+} HttpConnction_t;
+
+typedef std::vector<HttpConnction_t*> HttpConnctionList_t;
+
 typedef struct {
 	std::string key;
 	std::string value;
@@ -292,6 +307,99 @@ void sendReplyMediaEcho(BIO* sbio, uint8_t* data, HttpReq_t& httpReq, char* outB
     BIO_write(sbio, data, httpReq.dataSize);
 }
 
+
+void connectionBody(void* param) {
+	assert(param != nullptr);
+	HttpConnction_t* connection = (HttpConnction_t*)param;
+	logWrite(HTTP_LOG_DEBUG, "Staring http connection(%u)", connection->id);
+	BIO* sbio = connection->sbio;
+    //SSL Handshake fail for self signed certificate, nothing to worry.
+    if (BIO_do_handshake(sbio) <= 0) {
+		logWrite(HTTP_LOG_ERROR, "BIO_do_handshake failed");
+		ERR_print_errors_fp(stderr);
+		//exit(1);
+	}
+	char* line = new char[HTTP_LINE_SIZE_MAX];
+	char* httpHeader = new char[HTTP_HEADER_SIZE_MAX];
+	
+	//We dont pre-allocate any memory to read the HTTP payload
+	//(i.e. recorded media fragment in this case), will allocate 
+	//based on needs.
+	uint8_t* contentData = nullptr;
+	uint32_t contentDataMaxSize = 0;
+	HttpReq_t httpReq;
+	do {
+		int pos = 0;
+		bool keepReading = true;
+		//Read the entire HTTP header.
+		do {
+			int32_t len = BIO_gets(sbio, line, HTTP_LINE_SIZE_MAX);
+			if (len <= 0) {
+				if (BIO_should_read(sbio)) {
+					logWrite(HTTP_LOG_DEBUG, "Need to read more");
+				} else {
+					keepReading = false;
+				}
+			} else {
+				strncpy (httpHeader + pos, line, HTTP_HEADER_SIZE_MAX - pos);
+				pos += len;
+				if (line[0] = '\r' && line[1] == '\n') {
+					logWrite(HTTP_LOG_DEBUG, "HTTP Message:\n%s", httpHeader);
+					keepReading = false;
+				}
+			}
+		} while (keepReading);
+		if (pos <= 0) {
+			BIO_flush(sbio);
+			break;
+		}
+
+		parseHttpMessage (httpHeader, pos, httpReq);
+		if (httpReq.dataSize > 0) {
+			//Check if we need to grow the content buffer
+			if (httpReq.dataSize > contentDataMaxSize) {
+				if (contentData != nullptr)
+					delete contentData;
+				contentDataMaxSize = HTTP_MEDIA_PAYLOAD_MAX(httpReq.dataSize);
+				contentData = new uint8_t[contentDataMaxSize];
+				logWrite(HTTP_LOG_DEBUG, "Buffer allocated for media payload = %d", contentDataMaxSize);
+			}
+			int32_t len = BIO_read(sbio, contentData, httpReq.dataSize);
+			if (len <= 0) {
+				logWrite(HTTP_LOG_ERROR, "Unable to read content data");
+			} else {
+				logWrite(HTTP_LOG_DEBUG, "Read content data = %d", httpReq.dataSize);
+			}
+		}
+		if(httpReq.url.cmd.empty() ||
+		   httpReq.url.cmd == "" ||
+		   httpReq.url.cmd == HTTP_CMD_LANDING_PAGE) {
+			logWrite(HTTP_LOG_DEBUG, "Request: Landing page");
+			sendReplyPage(sbio, HTTP_CMD_LANDING_PAGE, "text/html; charset=UTF-8", httpReq, httpHeader);
+		} else if (httpReq.url.cmd == HTTP_CMD_MEDIA_ECHO) {
+			logWrite(HTTP_LOG_DEBUG, "Request: Echo");
+			sendReplyMediaEcho(sbio, contentData, httpReq, httpHeader);	
+		} else if (httpReq.url.cmd == HTTP_CMD_FAVICON) {
+			logWrite(HTTP_LOG_DEBUG, "Request: favicon.ico");
+			sendReplyPage(sbio, HTTP_CMD_FAVICON, "image/x-icon", httpReq, httpHeader);
+		} else {
+			sendReplyError(sbio, "Invalid Request!", httpReq, httpHeader);
+		}
+		BIO_flush(sbio);
+	} while (httpReq.keepAlive);
+	
+	BIO_free_all(sbio);	
+	if (line != nullptr)
+		delete line;
+	if (httpHeader != nullptr)
+		delete httpHeader;
+	if (contentData != nullptr)
+		delete contentData;
+	logWrite(HTTP_LOG_DEBUG, "Ending http connection(%u)", connection->id);
+	connection->state = CONNECTION_STATE_END;
+}
+
+
 void printUsage() {
     printf("Usage: server.exe -i ip -p port [-f frag] [-c certificate]\n");
     printf("\t -i ip\t\tWebserver IP\n");
@@ -341,15 +449,9 @@ int main(int argc, char** argv)
 		logWrite(HTTP_LOG_ERROR, "SSL_CTX_check_private_key failed");
 		exit(1);
 	}
-	
-	char* line = new char[HTTP_LINE_SIZE_MAX];
-	char* httpHeader = new char[HTTP_HEADER_SIZE_MAX];
-	
-	//We dont pre-allocate any memory to read the HTTP payload
-	//(i.e. recorded media fragment in this case), will allocate 
-	//based on needs.
-	uint8_t* contentData = nullptr;
-	uint32_t contentDataMaxSize = 0;
+		
+	uint32_t connectionId = 0;
+	HttpConnctionList_t connectionList;
 	
     //Webserver main loop
     while (1) {	
@@ -384,76 +486,28 @@ int main(int argc, char** argv)
 		
         sbio = BIO_pop(acpt);
         BIO_free_all(acpt);
-	
-	    //SSL Handshake fail for self signed certificate, nothing to worry.
-        if (BIO_do_handshake(sbio) <= 0) {
-			logWrite(HTTP_LOG_ERROR, "BIO_do_handshake failed");
-		    ERR_print_errors_fp(stderr);
-		    //exit(1);
-	    }
 		
-		HttpReq_t httpReq;
-	    do {
-			int pos = 0;
-			bool keepReading = true;
-			//Read the entire HTTP header.
-			do {
-				int32_t len = BIO_gets(sbio, line, HTTP_LINE_SIZE_MAX);
-				if (len <= 0) {
-					if (BIO_should_read(sbio)) {
-						logWrite(HTTP_LOG_DEBUG, "Need to read more");
-					} else {
-						keepReading = false;
-					}
-				} else {
-					strncpy (httpHeader + pos, line, HTTP_HEADER_SIZE_MAX - pos);
-					pos += len;
-					if (line[0] = '\r' && line[1] == '\n') {
-						logWrite(HTTP_LOG_DEBUG, "HTTP Message:\n%s", httpHeader);
-						keepReading = false;
-					}
-				}
-			} while (keepReading);
-			if (pos <= 0) {
-				BIO_flush(sbio);
-				break;
-			}
+		//Create dedicated thread to handle new http connection.
+		HttpConnction_t* connection = new HttpConnction_t();
+		connection->id     = connectionId++;
+		connection->sbio   = sbio;
+		connection->state  = CONNECTION_STATE_INIT;
+		connection->thread = new std::thread(connectionBody, connection);
+		connectionList.push_back(connection);	
 
-			parseHttpMessage (httpHeader, pos, httpReq);
-			if (httpReq.dataSize > 0) {
-				//Check if we need to grow the content buffer
-				if (httpReq.dataSize > contentDataMaxSize) {
-					if (contentData != nullptr)
-						delete contentData;
-					contentDataMaxSize = HTTP_MEDIA_PAYLOAD_MAX(httpReq.dataSize);
-					contentData = new uint8_t[contentDataMaxSize];
-					logWrite(HTTP_LOG_DEBUG, "Buffer allocated for media payload = %d", contentDataMaxSize);
-				}
-				int32_t len = BIO_read(sbio, contentData, httpReq.dataSize);
-				if (len <= 0) {
-					logWrite(HTTP_LOG_ERROR, "Unable to read content data");
-				} else {
-					logWrite(HTTP_LOG_DEBUG, "Read content data = %d", httpReq.dataSize);
-				}
-			}
-			if(httpReq.url.cmd.empty() ||
-			   httpReq.url.cmd == "" ||
-			   httpReq.url.cmd == HTTP_CMD_LANDING_PAGE) {
-				logWrite(HTTP_LOG_DEBUG, "HTTP request: Landing page");
-				sendReplyPage(sbio, HTTP_CMD_LANDING_PAGE, "text/html; charset=UTF-8", httpReq, httpHeader);
-			} else if (httpReq.url.cmd == HTTP_CMD_MEDIA_ECHO) {
-				logWrite(HTTP_LOG_DEBUG, "HTTP request: Echo");
-				sendReplyMediaEcho(sbio, contentData, httpReq, httpHeader);	
-			} else if (httpReq.url.cmd == HTTP_CMD_FAVICON) {
-				logWrite(HTTP_LOG_DEBUG, "HTTP request: favicon.ico");
-				sendReplyPage(sbio, HTTP_CMD_FAVICON, "image/x-icon", httpReq, httpHeader);
+		//Cleanup dead connection.
+		HttpConnctionList_t::iterator it = connectionList.begin();
+		while (it != connectionList.end()) {
+			HttpConnction_t* con = *it;
+			if (con->state == CONNECTION_STATE_END) {
+				con->thread->join();
+				delete con->thread;
+				delete con;
+				it = connectionList.erase(it);
 			} else {
-				sendReplyError(sbio, "Invalid Request!", httpReq, httpHeader);
+				it++;
 			}
-
-			BIO_flush(sbio);
-		} while (httpReq.keepAlive);
-		BIO_free_all(sbio);
+		}
     }	 
 	
     return 0;
