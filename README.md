@@ -12,34 +12,32 @@ Chrome, Edge, and Firefox.
 Backend, developed in C++, hosts index.html and respond to browser ```mediaEcho```  
 ```POST``` request.  
 ### Index.html
-Frontend, records video from webcam and microphone and send the recorded  
-fragment to server via ```POST```. From from response its fetches the fragment, play and  
-update statistical data.   
+Browser starts a WebRTC call with the backend server, server receives the call and  
+attach the remote audio and video tracks to its local stream and send it back to the  
+the browser.  
 
 ## Build
 Open VC++ Native Tool command prompt:  
 ```
 cd webrtc_reflector
-nmake -f makefile_x64
+nmake -f makefile_x86
 ```
 
 ## Run
-copy ```server.exe``` into from ```webrtc_reflector\bin\x64``` to ```webrtc_reflector``` folder  
-copy all ```.dll``` files from ```webrtc_reflector\openssl-1.1\x64\bin``` to ```webrtc_reflector``` folder  
+Go to ```webrtc_reflector\bin``` and run:   
 ```
-server.exe -i <IP Address> -p <Port>
+webrtc_server.exe -i <IP Address> -p <Port>
 ```
-Open a browser(Chrome/Firefox/Edge) and type: ```https://<IP Address>:<Port>```  
+Open a browser(Chrome/Firefox/Edge/Safari) and type: ```https://<IP Address>:<Port>```  
 Since the self signed certificate used, the certificate verification fails, ignore  
 and proceed to view the page. On the page, click on ```Connect``` button. The video  
 streaming. On the upper left corner it shows following information:  
-  
-Video Container - Format used for video recording  
-Video Bitrate - Bitrate used for video recording  
-Video Fragment - Recorded fragment size in second  
-Video RTT - Round trip time per fragment  
+    
+Bitrate - Received bitrate  
+Fps - Video frames per second  
 Uplink Speed - Network speed between browser to local router  
-Connection Type - 'slow-2g', '2g', '3g', or '4g'    
+Connection Type - 'slow-2g', '2g', '3g', or '4g' 
+Packet Lost - Total number of lost packets       
 
 NOTE:  
 1. Default port is 4433  
@@ -54,7 +52,8 @@ For testing and development a self-signed certificate(```server.pem```) used.
 Tested with the following browsers:  
 1. Chrome - 85.0.4183.102  
 2. Firefox - 80.0.1  
-3. Edge - 85.0.564.51  
+3. Edge - 85.0.564.51 
+4. Safari - Catalina 
 
 ## Known Issues
 Even though the ```echoCancellation``` and ```noiseSuppression``` options are used in  
