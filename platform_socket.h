@@ -1,10 +1,3 @@
-/*
- * platform_socket.h
- *
- *  Created on: Nov,30 2018
- *      Author: SKARMAK1
- */
-
 #ifndef PLATFORM_SOCKET_H
 #define PLATFORM_SOCKET_H
 
