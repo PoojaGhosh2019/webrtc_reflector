@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html>
+<head>
+<link rel="icon" href="favicon.ico" type="image/x-icon">
+<link rel="shortcut icon" href="favicon.ico" type="image/x-icon"> 
+<title>WebRTC Reflector</title>
+</head>
+<style>
+.video_item {
+	width: 90%;
+	height: auto;
+	border-style: solid;
+	border-color: red;
+	border-width: 2px;
+	align-items: center;
+	justify-content: center;
+    display: flex;
+	flex-direction: column;
+}
+
+.overlay_item {
+    background: #b3e0ff;
+	position: absolute;
+    width: 25%;
+	top: 3%; left: 3%;
+    display: none;
+    margin: 2px;
+	z-index: 2;
+}
+
+p {
+  margin-top: 2px;
+  margin-bottom: 2px;
+  font-size: 18px;
+  font-family: Arial;
+  text-decoration: none;
+}
+
+label {
+    font-size: 20px;
+	font-family: Arial;
+}
+
+button {
+    margin: 2px;
+    background-color: #007acc;
+	border-style: solid;
+	border-color: black;
+	border-width: 1px;
+    color: white;
+    padding: 10px 32px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 20px;
+	font-family: Arial;
+}
+button:hover {
+    box-shadow: 5px 10px 14px #888888;
+}
+button:active {
+    background-color: #004d80;
+}
+
+button:disabled {
+    opacity: 0.5;
+	background-color: #3333cc;
+    cursor: not-allowed;
+}
+
+
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #f1f1f1;
+  min-width: 160px;
+  overflow: auto;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  z-index: 1;
+}
+
+.dropdown-content a {
+  color: black;
+  padding: 12px 16px;
+  text-decoration: none;
+  display: block;
+}
+
+.dropdown a:hover {background-color: #ddd;}
+
+.show {display: block;}
+
+
+</style>
+<body onLoad="handleLoading()">
+<div id='overlay' class="overlay_item">
+<p id='rate'>Bitrate: --</p>
+<p id='fps'>Fps: --</p>
+<p id='nettype'>Network Type: --</p>
+<p id='downlink'>Downlink Speed: --</p>
+<p id='lost'>Packet Lost: --</p>
+</div>
+<center>
+<div class="video_item">
+<video playsinline autoplay id='reflect_video2' width=640 height=480 oncanplay="startPlaying();"></video>
+</div>
+
+<div>
+<input type="checkbox" id="mute" name="mute" onclick="handleMute(this);">
+<label for="mute">Audio Mute</label>
+<div class="dropdown">
+  <button id='mic' onclick="handleSelectMicButton()" disabled>Microphone</button>
+  <div id="mic_dropdown" class="dropdown-content">
+  </div>
+</div>
+<div class="dropdown">
+  <button id='camera' onclick="handleSelectCameraButton()" disabled>Camera</button>
+  <div id="camera_dropdown" class="dropdown-content">
+  </div>
+</div>
+<button id="connect" onclick="handleConnect()">Connect</button>
+</div>
+</center>
+<p id='log'></p>
+<script>
+let mediaStream = null;
+const serverUrl = "https://%s:%d";
+let browser = "Chrome";
+let cameraDevice = [];
+let cameraIndex = 0;
+let micDevice = [];
+let micIndex = 0;
+let peerConnection = null;
+let peerId = 0;
+let connected = false;
+let req = null;
+var reqGet = null;
+let statusTimer = null
+let log = %d
+
+RTCPeerConnection = window.mozRTCPeerConnection || window.webkitRTCPeerConnection || window.RTCPeerConnection;
+RTCSessionDescription = window.mozRTCSessionDescription || window.RTCSessionDescription;
+RTCIceCandidate = window.mozRTCIceCandidate || window.RTCIceCandidate;
+//navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia
+
+//URL = window.webkitURL || window.URL;
+
+let iceCandidateMsg = null;
+
+function getMediaStream()
+{
+    //const pcConfig = {"iceServers": [{"urls": "stun:stun.l.google.com:19302"}]};
+    const pcConfig = {"iceServers": []};	
+	peerConnection = new RTCPeerConnection(pcConfig);
+    peerConnection.onicecandidate = function(event) {
+		if (event.candidate) {
+			var candidate = {
+				sdpMLineIndex: event.candidate.sdpMLineIndex,
+                sdpMid: event.candidate.sdpMid,
+                candidate: event.candidate.candidate
+            };
+			if (iceCandidateMsg !== null) {
+				iceCandidateMsg += '######'
+				iceCandidateMsg += JSON.stringify(event.candidate);
+			} else {
+			    iceCandidateMsg = 'ICE->' 
+				iceCandidateMsg += JSON.stringify(event.candidate);
+			}
+			
+            //sendMessage(JSON.stringify(event.candidate));
+        } else {
+            logWrite("End of Sending ICE Candidates");
+        }
+    };
+    peerConnection.oniceconnectionstatechange = function(event) {
+		if (peerConnection.iceConnectionState === "connected") {
+			logWrite("ICE connected ...");
+        }
+    };
+	peerConnection.onicegatheringstatechange = function(event) {
+		if (peerConnection.iceGatheringState === "complete") {
+			logWrite("ICE gathering complete ...")
+			sendMessage(iceCandidateMsg);
+		}
+	};
+	peerConnection.onnegotiationneeded = function() {
+		logWrite("onnegotiationneeded")
+	}
+	
+	peerConnection.ontrack = function(event) {
+		logWrite("Remote track added")
+		if (event.streams.length === 0) {
+			logWrite("Empty stream")
+			return;
+		}
+		let videoObject = document.getElementById('reflect_video2')
+		videoObject.srcObject = event.streams[0];
+		videoObject.play().then(_=> {
+			logWrite("Playback started")
+		}).catch(error => {
+			logWrite("Playback error")
+		});
+	};
+	
+	peerConnection.onremovestream = function() {
+		logWrite("onremovestream")
+	};
+    			
+	let option = {
+		audio: {
+			deviceId: micDevice[micIndex].deviceId,
+			groupId: micDevice[micIndex].groupId
+		},
+		video: {
+			deviceId: cameraDevice[cameraIndex].deviceId,
+			groupId: cameraDevice[cameraIndex].groupId
+		}
+	};
+	
+	if (cameraDevice.length === 0 && micDevice.length > 0) {
+		option = {
+			audio: {
+				deviceId: micDevice[micIndex].deviceId,
+				groupId: micDevice[micIndex].groupId
+			}
+		};
+	} else if (micDevice.length === 0 && cameraDevice.length > 0) {
+		option = {
+			video: {
+				deviceId: cameraDevice[cameraIndex].deviceId,
+				groupId: cameraDevice[cameraIndex].groupId
+			}
+		};
+	}
+
+    navigator.mediaDevices.getUserMedia(option).then(function(stream) {		
+	    mediaStream = stream;
+		stream.getTracks().forEach(track =>  {
+			peerConnection.addTrack(track);
+			logWrite("Local track added: " + track.kind)
+		});
+		if (browser === 'Safari') {
+			peerConnection.createOffer().then(function(desc) {
+				peerConnection.setLocalDescription(desc);
+				sendMessage('SDP->' + JSON.stringify(desc));
+			}).catch(function(error) {
+				logWrite("createOffer() failed " + error);
+			});
+		} else {
+			peerConnection.createOffer(function (desc) {
+				peerConnection.setLocalDescription(desc);
+				sendMessage('SDP->' + JSON.stringify(desc));
+			}, function (error) {
+				logWrite("createOffer() failed " + error);
+			});
+		}
+
+    }).catch(error => {
+		logWrite('getUserMedia error: ' + error); 
+	});
+}
+
+function sendMessage(data) {
+    logWrite("sendMessage " + data);
+
+	var req2 = new XMLHttpRequest();
+	req2.onreadystatechange = () => {};
+	req2.open("POST", serverUrl + "/message", true);
+	req2.setRequestHeader("Content-Type", "text/plain");
+	req2.setRequestHeader("Pragma", peerId.toString());
+	req2.send(data);
+}
+
+
+function signIn() {
+    logWrite("signIn");
+    req = new XMLHttpRequest();
+    req.onreadystatechange = () => {
+		if (req.readyState == 4) {
+			if (req.status == 200) {
+				peerId = parseInt(req.getResponseHeader("Pragma"))
+				waitOn();
+				getMediaStream();
+				connected = true
+			}
+		}
+	};
+    req.open("GET", serverUrl + "/signIn", true);
+    req.send();
+}
+
+function waitOn() {
+    logWrite("waitOn");
+    reqGet = new XMLHttpRequest();
+    reqGet.onreadystatechange = () => {
+	    if (reqGet.readyState !== 4)
+			return;
+		if (reqGet.status !== 200) {
+			return;
+		} else {
+			logWrite("WAIT response: " + reqGet.responseText);
+			let t = reqGet.responseText.split('->')
+			//let dataJson = JSON.parse(reqGet.responseText);
+            if (t[0] === 'SDP') {
+				let dataJson = JSON.parse(t[1]);
+				peerConnection.setRemoteDescription(new RTCSessionDescription(dataJson), function (result) {
+					logWrite("setRemoteDescription success");
+				}, function (error) {
+					logWrite("setRemoteDescription fail");
+				});
+			} else if (t[0] === 'ICE') {
+				if (peerConnection !== null) {
+					let t2 = t[1].split('######');
+					t2.forEach(ice => {
+						logWrite(ice)
+						let dataJson = JSON.parse(ice);
+						var candidate = new RTCIceCandidate({candidate: dataJson.candidate, sdpMid: dataJson.sdpMid, sdpMLineIndex: dataJson.sdpMLineIndex});
+						peerConnection.addIceCandidate(candidate);
+					});
+				}
+			} else {
+				logWrite("Unknown message: " + responseText)
+			}
+		}
+		if (reqGet !== null) {
+			reqGet.abort();
+			reqGet = null;
+		}
+		
+		window.setTimeout(waitOn, 0)
+	};
+    
+    reqGet.ontimeout = () => {
+		window.setTimeout(waitOn, 0);
+	};
+    reqGet.open("GET", serverUrl + "/wait", true);
+	reqGet.setRequestHeader("Pragma", peerId.toString());
+    reqGet.send();
+}
+
+
+
+function updateNetworkStat() {
+	if ('connection' in navigator) {
+		//logWrite(navigator.connection)
+		if ('effectiveType' in navigator.connection)
+			document.getElementById('nettype').innerHTML = "Network Type: " + navigator.connection.effectiveType
+		if ('downlink' in navigator.connection)
+			document.getElementById('downlink').innerHTML = "Downlink Speed: " + navigator.connection.downlink + " Mbps"
+	} else {
+		logWrite("navigator.connection not supported")
+	}
+}
+
+function isPrintable(str) {
+	for (let i = 0; i < str.length; i++) {
+		const val = str.codePointAt(i);
+		if (val > 32 && val < 127)
+			return true;
+	}
+	return false
+}
+
+function handleLoading() {
+	//logWrite(navigator.userAgent)
+	let str = navigator.userAgent
+	let srtList = str.split(" ");
+	let token = srtList[srtList.length - 1]
+	browser = token.split("/")[0]
+	
+	logWrite("Browser = " + browser)
+	
+    navigator.mediaDevices.enumerateDevices().then(function(devices) {
+		devices.forEach(function(device) {
+			if (device.deviceId !== 'default' && device.deviceId !== 'communications') {
+				if (device.kind === 'audioinput') {
+					micDevice.push({deviceId: device.deviceId, groupId: device.groupId, label: device.label});
+				} else if (device.kind === 'videoinput') {
+					cameraDevice.push({deviceId: device.deviceId, groupId: device.groupId, label: device.label});
+				}
+			}
+			//logWrite(device);
+		});
+		logWrite("Camera Device = " + cameraDevice.length)
+		logWrite("Mic Device = " + micDevice.length)
+		for (let i = 0; i < cameraDevice.length; i++) {
+			let t = cameraDevice[i].label
+			if (!isPrintable(t))
+				t = "Camera " + i
+			document.getElementById('camera_dropdown').innerHTML += '<a onclick="handleSelectCamera(' + i + ')">' + t + '</a>'
+		}
+		for (let i = 0; i < micDevice.length; i++) {
+			let t = micDevice[i].label
+			if (!isPrintable(t))
+				t = "Microphone " + i
+			document.getElementById('mic_dropdown').innerHTML += '<a onclick="handleSelectMic(' + i + ')">' + t + '</a>'
+		}
+		
+		if (micDevice.length > 0) {
+			document.getElementById('mic').disabled = false;
+		}		
+		if (cameraDevice.length > 0) {
+			document.getElementById('camera').disabled = false;
+		}	
+
+	}).catch(function(err) {
+		logWrite(err.name + ": " + err.message);
+	});
+}
+
+function startRecording() {
+	
+	signIn();
+
+	updateNetworkStat();
+    document.getElementById('connect').innerHTML = "Disconnect"
+	document.getElementById('overlay').style.display = "inline"
+}
+
+function stopRecording() {
+	mediaStream.getTracks().forEach(function(track) {
+	  track.stop();
+	});
+	
+	if (statusTimer !== null) {
+		clearInterval(statusTimer)
+		statusTimer = null
+	}
+	if (peerConnection !== null) {
+		peerConnection.close()
+	    peerConnection = null
+	}
+		
+	peerId = 0
+	iceCandidateMsg = null
+	if (req !== null) {
+		req.abort();
+		req = null;
+	}
+	if (reqGet !== null) {
+		reqGet.abort();
+		reqGet = null;
+	}
+	connected = false;
+	document.getElementById('connect').innerHTML = "Connect"
+	document.getElementById('reflect_video2').removeAttribute('src')
+	document.getElementById('reflect_video2').load()
+	document.getElementById('rate').innerHTML = "Bitrate: --"
+	document.getElementById('fps').innerHTML = "Fps: --"
+	document.getElementById('lost').innerHTML = "Packet Lost: --"
+	document.getElementById('nettype').innerHTML = "Network Type: --"
+	document.getElementById('downlink').innerHTML = "Downlink Speed: --"
+	document.getElementById('overlay').style.display = "none"
+}
+
+function handleConnect() {
+	if (!connected) {
+		startRecording();
+	} else {
+		stopRecording();
+	}
+}
+
+function handleSelectCameraButton() {
+  document.getElementById("camera_dropdown").classList.toggle("show");
+}
+
+function handleSelectCamera(index) {
+  document.getElementById("camera_dropdown").classList.toggle("show");
+  cameraIndex = index;
+  logWrite("Camera selected " + index)
+}
+
+function handleSelectMicButton() {
+  document.getElementById("mic_dropdown").classList.toggle("show");
+}
+
+function handleSelectMic(index) {
+  document.getElementById("mic_dropdown").classList.toggle("show");
+  micIndex = index;
+  logWrite("Microphone selected " + index)
+}
+
+function handleMute(cb) {
+	var video = document.getElementById('reflect_video2');
+	video.muted = cb.checked
+}
+
+
+function startPlaying() {
+	logWrite("startPlaying()")
+	let selectorAudio = null
+	let selectorVideo = null
+	if (peerConnection === null)
+		return
+	let selectorCount = peerConnection.getReceivers().length
+	if (selectorCount > 0) {
+		let track_1 = peerConnection.getReceivers()[0].track
+		if (track_1.kind === 'audio') {
+			selectorAudio = track_1
+		} else if (track_1.kind === 'video') {
+			selectorVideo = track_1
+		}
+		if (selectorCount > 1) {
+			let track_2 = peerConnection.getReceivers()[1].track
+			if (track_2.kind === 'audio') {
+				selectorAudio = track_2
+			} else if (track_2.kind === 'video') {
+				selectorVideo = track_2
+			}
+		}
+	}
+	
+	let bytesReceiveAudioLast = 0;
+	let bytesReceiveVideoLast = 0;
+	let framesDecodedLast = 0;
+	
+	statusTimer = setInterval(function() {		
+		let videoPromis = null
+	    let audioPromis = null
+		if (selectorVideo !== null) {
+			videoPromis = peerConnection.getStats(selectorVideo)
+		}
+		if (selectorVideo !== null) {
+			audioPromis = peerConnection.getStats(selectorAudio)
+		}
+		
+		Promise.all([videoPromis, audioPromis]).then(values => {
+			//logWrite(values)
+			let rate = 0.0
+			let fps = 0.0
+			let lost = 0
+			if (values[0] !== null) {
+				for(var [key, value] of values[0]) {
+					if (key.indexOf("RTCInboundRTPVideoStream_") !== -1) {
+						if (value.hasOwnProperty('bytesReceived')) {
+							var bytes = (value.bytesReceived - bytesReceiveVideoLast);
+							bytesReceiveVideoLast = value.bytesReceived;
+							rate = parseFloat((bytes * 8) / (5 * 1000 * 1000))
+						}
+						if (value.hasOwnProperty('framesDecoded')) {
+							var frames = (value.framesDecoded - framesDecodedLast);
+							framesDecodedLast = value.framesDecoded;
+							fps = parseFloat(frames / 5).toFixed(1)
+						}
+						if (value.hasOwnProperty('packetsLost')) {
+							lost = parseInt(value.packetsLost)
+						}	
+					}
+				}
+			}
+			if (values[1] !== null) {
+				for(var [key, value] of values[1]) {
+					if (key.indexOf("RTCInboundRTPAudioStream_") !== -1) {
+						if (value.hasOwnProperty('bytesReceived')) {
+							var bytes = (value.bytesReceived - bytesReceiveAudioLast);
+							bytesReceiveAudioLast = value.bytesReceived;
+							rate += parseFloat((bytes * 8) / (5 * 1000 * 1000))
+						}
+						if (value.hasOwnProperty('packetsLost')) {
+							lost += parseInt(value.packetsLost)
+						}	
+					}
+				}
+			}
+						
+			//logWrite("Bitrate: " + rate.toFixed(2) + " Fps: " + fps + " Lost: " + lost)
+			
+	        document.getElementById('rate').innerHTML = "Bitrate: " + rate.toFixed(2) + " Mbps"
+	        document.getElementById('fps').innerHTML = "Fps: " + fps
+	        document.getElementById('lost').innerHTML = "Packet Lost: " + lost
+		});		
+	}, 5000);
+}
+
+function logWrite(e) {
+	if (log === 1) {
+		console.log(e)
+	} else if (log === 2) {
+		document.getElementById("log").innerHTML += e + "<br>";
+	}
+}
+
+</script>
+</body>
+</html>

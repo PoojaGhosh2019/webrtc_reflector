@@ -1,20 +1,40 @@
-LINKFLAGS=/LIBPATH:.\openssl-1.1\x86\lib /LIBPATH:"C:\Program Files (x86)\Microsoft SDKs\Windows\v7.1A\Lib" /WX
-LIBS=WSock32.lib Winmm.lib AdvAPI32.lib user32.lib libcrypto.lib libssl.lib
-INC=-I. -I.\openssl-1.1\x86\include
+LINKFLAGS=/LIBPATH:.\webrtc\lib\x86\Release /LIBPATH:"C:\Program Files (x86)\Microsoft SDKs\Windows\v7.1A\Lib" /WX
+LIBS=WSock32.lib Winmm.lib AdvAPI32.lib user32.lib strmiids.lib Secur32.lib msdmo.lib dmoguids.lib wmcodecdspuuid.lib ws2_32.lib Iphlpapi.lib libwebrtc_full.lib
+INC=-I. -I.\webrtc\include\webrtc -I.\webrtc\include -I.\webrtc\include\third_party\boringssl\src\include
 
 CC=cl.exe
 LINK=link.exe
 
-FLAGS=/D_WINDOWS /DENABLE_MEDIA_ROUTER=1 /D__STD_C /D_CRT_RAND_S /D_CRT_SECURE_NO_DEPRECATE /D_HAS_EXCEPTIONS=0 /DWINVER=0x0A00 /D__STDC_CONSTANT_MACROS /D__STDC_FORMAT_MACROS /EHsc /W3 /DDEBUG
+FLAGS=/D_WINDOWS /DENABLE_MEDIA_ROUTER=1 /D__STD_C /D_CRT_RAND_S /D_CRT_SECURE_NO_DEPRECATE /D_HAS_EXCEPTIONS=0 /DNOMINMAX /DWINVER=0x0A00 /D__STDC_CONSTANT_MACROS /D__STDC_FORMAT_MACROS /DWEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE /DEXPAT_RELATIVE_PATH /DHAVE_SCTP /DWEBRTC_WIN /DHAVE_SRTP /DHAVE_WEBRTC_VIDEO /DHAVE_WEBRTC_VOICE /DWEBRTC_ENABLE_PROTOBUF=1 /DRTC_ARCH_CPU_LITTLE_ENDIAN /DWEBRTC_EXTERNAL_JSON /EHsc /W3 /MD
 
+default:   webrtc_server.exe
 
-default:   server.exe
+webrtc_server.exe: server.o getopt.o observer.o jsoncpp.o platform_socket.o log.o message_queue.o webrtc_connection.o http.o
+	$(LINK) $(LINKFLAGS) /OUT:webrtc_server.exe server.o getopt.o observer.o jsoncpp.o platform_socket.o log.o message_queue.o webrtc_connection.o http.o $(LIBS)
 
-server.exe: server.o getopt.o
-	$(LINK) $(LINKFLAGS) /OUT:server.exe server.o getopt.o $(LIBS)
+message_queue.o: message_queue.cpp
+	$(CC) $(FLAGS) $(INC) /c message_queue.cpp /Fomessage_queue.o
 
+log.o: log.cpp
+	$(CC) $(FLAGS) $(INC) /c log.cpp /Folog.o
+
+platform_socket.o: platform_socket.cpp
+	$(CC) $(FLAGS) $(INC) /c platform_socket.cpp /Foplatform_socket.o
+	
+http.o: http.cpp
+	$(CC) $(FLAGS) $(INC) /c http.cpp /Fohttp.o
+
+webrtc_connection.o: webrtc_connection.cpp
+	$(CC) $(FLAGS) $(INC) /c webrtc_connection.cpp /Fowebrtc_connection.o
+	
+jsoncpp.o: jsoncpp.cpp
+	$(CC) $(FLAGS) $(INC) /c jsoncpp.cpp /Fojsoncpp.o
+	
 getopt.o: getopt.cpp
 	$(CC) $(FLAGS) $(INC) /c getopt.cpp /Fogetopt.o
+	
+observer.o: observer.cpp
+	$(CC) $(FLAGS) $(INC) /c observer.cpp /Foobserver.o
 
 server.o: server.cpp
 	$(CC) $(FLAGS) $(INC) /c server.cpp /Foserver.o
@@ -22,5 +42,5 @@ server.o: server.cpp
 clean:
 	del *.o
 	del *.exe
-	del server.lib
-	del server.exp
+	del webrtc_server.lib
+	del webrtc_server.exp
